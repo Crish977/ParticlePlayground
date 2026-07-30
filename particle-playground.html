@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Particle Playground</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #151822;
+    --border: #2a2f3d;
+    --text: #e8eaf0;
+    --accent: #6ee7b7;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    height: 100%;
+    overflow: hidden;
+  }
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  #toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .btn {
+    background: #1c202c;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn:hover { background: #262b3a; }
+  .btn.active {
+    border-color: var(--accent);
+    background: #1c2b26;
+    color: var(--accent);
+  }
+  .swatch {
+    width: 12px; height: 12px;
+    border-radius: 3px;
+    display: inline-block;
+  }
+  #toolbar label {
+    font-size: 12px;
+    color: #9aa1b2;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 6px;
+  }
+  #toolbar input[type=range] {
+    width: 90px;
+  }
+  .spacer { flex: 1; }
+  #canvasWrap {
+    flex: 1;
+    position: relative;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+  }
+  #hint {
+    position: absolute;
+    bottom: 10px;
+    left: 12px;
+    font-size: 11px;
+    color: #6b7180;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <button class="btn active" data-el="sand"><span class="swatch" style="background:#d9b26a"></span>Sand</button>
+    <button class="btn" data-el="water"><span class="swatch" style="background:#3aa6ff"></span>Water</button>
+    <button class="btn" data-el="fire"><span class="swatch" style="background:#ff5a3c"></span>Fire</button>
+    <button class="btn" data-el="wall"><span class="swatch" style="background:#7a7f8c"></span>Wall</button>
+    <button class="btn" data-el="wood"><span class="swatch" style="background:#8a5a2b"></span>Wood</button>
+    <button class="btn" data-el="erase"><span class="swatch" style="background:#0b0d12;border:1px solid #444"></span>Erase</button>
+    <label>Brush <input id="brush" type="range" min="1" max="20" value="5"></label>
+    <div class="spacer"></div>
+    <button class="btn" id="clearBtn">Clear</button>
+  </div>
+  <div id="canvasWrap">
+    <canvas id="c"></canvas>
+    <div id="hint">Click and drag to paint particles. Try dropping fire on wood.</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const CELL = 4; // pixel size of each simulation cell
+  let cols, rows;
+  let grid, nextGrid;
+
+  const EMPTY = 0, SAND = 1, WATER = 2, WALL = 3, FIRE = 4, WOOD = 5, STEAM = 6;
+
+  const COLORS = {
+    [EMPTY]: null,
+    [SAND]: ['#d9b26a', '#cf a55c', '#e0bd7a'],
+    [WATER]: ['#3aa6ff', '#2f8fe0', '#57b6ff'],
+    [WALL]: ['#7a7f8c'],
+    [FIRE]: ['#ff5a3c', '#ff8a3c', '#ffd23c'],
+    [WOOD]: ['#8a5a2b', '#7a4d24'],
+    [STEAM]: ['#c9d3e0', '#b8c2d1']
+  };
+
+  let currentEl = SAND;
+  let brushSize = 5;
+  let painting = false;
+  let lastX = null, lastY = null;
+
+  function resize() {
+    const wrap = document.getElementById('canvasWrap');
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    canvas.width = w;
+    canvas.height = h;
+    cols = Math.floor(w / CELL);
+    rows = Math.floor(h / CELL);
+    grid = new Uint8Array(cols * rows);
+    nextGrid = new Uint8Array(cols * rows);
+    colorIdx = new Uint8Array(cols * rows);
+  }
+
+  let colorIdx;
+  window.addEventListener('resize', resize);
+  resize();
+
+  function idx(x, y) { return y * cols + x; }
+  function inBounds(x, y) { return x >= 0 && x < cols && y >= 0 && y < rows; }
+
+  function setCell(x, y, type) {
+    if (!inBounds(x, y)) return;
+    const i = idx(x, y);
+    grid[i] = type;
+    colorIdx[i] = Math.floor(Math.random() * (COLORS[type] ? COLORS[type].length : 1));
+  }
+
+  function paintAt(px, py, type, size) {
+    const cx = Math.floor(px / CELL);
+    const cy = Math.floor(py / CELL);
+    const r = Math.max(0, size - 1);
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (dx * dx + dy * dy <= r * r + 1) {
+          if (Math.random() < 0.85) setCell(cx + dx, cy + dy, type);
+        }
+      }
+    }
+  }
+
+  function paintLine(x0, y0, x1, y1, type, size) {
+    const dist = Math.hypot(x1 - x0, y1 - y0);
+    const steps = Math.max(1, Math.floor(dist / (CELL)));
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      paintAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, type, size);
+    }
+  }
+
+  function step() {
+    nextGrid.set(grid);
+    for (let y = rows - 1; y >= 0; y--) {
+      for (let x = 0; x < cols; x++) {
+        const i = idx(x, y);
+        const t = grid[i];
+        if (t === EMPTY || t === WALL || t === WOOD) continue;
+
+        if (t === SAND) {
+          const below = inBounds(x, y + 1) ? idx(x, y + 1) : -1;
+          if (below !== -1 && (grid[below] === EMPTY || grid[below] === WATER)) {
+            swap(i, below);
+          } else {
+            const dir = Math.random() < 0.5 ? -1 : 1;
+            const bl = inBounds(x - dir, y + 1) ? idx(x - dir, y + 1) : -1;
+            const br = inBounds(x + dir, y + 1) ? idx(x + dir, y + 1) : -1;
+            if (bl !== -1 && (grid[bl] === EMPTY || grid[bl] === WATER)) swap(i, bl);
+            else if (br !== -1 && (grid[br] === EMPTY || grid[br] === WATER)) swap(i, br);
+          }
+        } else if (t === WATER) {
+          const below = inBounds(x, y + 1) ? idx(x, y + 1) : -1;
+          if (below !== -1 && grid[below] === EMPTY) {
+            swap(i, below);
+          } else {
+            const dir = Math.random() < 0.5 ? -1 : 1;
+            const s1 = inBounds(x + dir, y) ? idx(x + dir, y) : -1;
+            const s2 = inBounds(x - dir, y) ? idx(x - dir, y) : -1;
+            if (s1 !== -1 && grid[s1] === EMPTY) swap(i, s1);
+            else if (s2 !== -1 && grid[s2] === EMPTY) swap(i, s2);
+          }
+        } else if (t === FIRE) {
+          // fire rises briefly, spreads to wood, extinguishes near water, fades randomly
+          let extinguished = false;
+          for (const [nx, ny] of neighbors(x, y)) {
+            if (!inBounds(nx, ny)) continue;
+            const ni = idx(nx, ny);
+            if (grid[ni] === WATER) { extinguished = true; }
+            if (grid[ni] === WOOD && Math.random() < 0.05) nextGrid[ni] = FIRE;
+          }
+          if (extinguished || Math.random() < 0.04) {
+            nextGrid[i] = Math.random() < 0.5 ? EMPTY : STEAM;
+          } else {
+            const above = inBounds(x, y - 1) ? idx(x, y - 1) : -1;
+            if (above !== -1 && grid[above] === EMPTY && Math.random() < 0.6) swap(i, above);
+          }
+        } else if (t === STEAM) {
+          const above = inBounds(x, y - 1) ? idx(x, y - 1) : -1;
+          if (above !== -1 && grid[above] === EMPTY && Math.random() < 0.8) {
+            swap(i, above);
+          } else {
+            const dir = Math.random() < 0.5 ? -1 : 1;
+            const s1 = inBounds(x + dir, y) ? idx(x + dir, y) : -1;
+            if (s1 !== -1 && grid[s1] === EMPTY) swap(i, s1);
+          }
+          if (Math.random() < 0.01) nextGrid[i] = EMPTY;
+        }
+      }
+    }
+    const tmp = grid; grid = nextGrid; nextGrid = tmp;
+  }
+
+  function neighbors(x, y) {
+    return [[x-1,y],[x+1,y],[x,y-1],[x,y+1],[x-1,y-1],[x+1,y-1],[x-1,y+1],[x+1,y+1]];
+  }
+
+  function swap(i, j) {
+    const t = nextGrid[i];
+    nextGrid[i] = nextGrid[j];
+    nextGrid[j] = t;
+    const c = colorIdx[i];
+    colorIdx[i] = colorIdx[j];
+    colorIdx[j] = c;
+  }
+
+  function render() {
+    ctx.fillStyle = '#0b0d12';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const t = grid[idx(x, y)];
+        if (t === EMPTY) continue;
+        const palette = COLORS[t];
+        const c = palette[colorIdx[idx(x,y)] % palette.length];
+        ctx.fillStyle = c;
+        ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+      }
+    }
+  }
+
+  function loop() {
+    step();
+    render();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // --- input handling ---
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    painting = true;
+    const p = getPos(e);
+    paintAt(p.x, p.y, currentEl, brushSize);
+    lastX = p.x; lastY = p.y;
+  });
+  window.addEventListener('pointerup', () => { painting = false; lastX = null; lastY = null; });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!painting) return;
+    const p = getPos(e);
+    if (lastX !== null) paintLine(lastX, lastY, p.x, p.y, currentEl, brushSize);
+    else paintAt(p.x, p.y, currentEl, brushSize);
+    lastX = p.x; lastY = p.y;
+  });
+
+  // toolbar
+  document.querySelectorAll('.btn[data-el]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.btn[data-el]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const el = btn.getAttribute('data-el');
+      currentEl = el === 'erase' ? EMPTY : { sand: SAND, water: WATER, fire: FIRE, wall: WALL, wood: WOOD }[el];
+    });
+  });
+
+  document.getElementById('brush').addEventListener('input', (e) => {
+    brushSize = parseInt(e.target.value, 10);
+  });
+
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    grid.fill(EMPTY);
+  });
+})();
+</script>
+</body>
+</html>
